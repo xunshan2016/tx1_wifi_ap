@@ -1,0 +1,130 @@
+1. Install hostapd dnsmasq
+
+    $ sudo apt-get install hostapd dnsmasq
+
+2.  Create file /etc/hostapd/hostapd.conf and add following in it. 
+
+    interface=wlan0
+    ssid=Tegra-WLAN  ## user can change this accordingly
+    hw_mode=g
+    channel=3
+    wpa=2
+    wpa_passphrase=1234567890  ## user can change this accordingly
+    wpa_key_mgmt=WPA-PSK
+
+  Above setting is for 2.4G softAP, to bring up softAP in 5G,
+  below parameters need to be modified as below:
+
+    hw_mode=a
+    channel=36
+
+3. Edit /etc/network/interfaces with following text
+
+    auto lo
+    iface lo inet loopback
+
+    auto wlan0
+    iface wlan0 inet static
+    hostapd /etc/hostapd/hostapd.conf
+    address 192.168.8.1
+    netmask 255.255.255.0
+
+4.  Edit /etc/dnsmasq.conf with following
+
+    interface=lo,wlan0
+    no-dhcp-interface=lo
+    dhcp-range=192.168.8.20,192.168.8.254,255.255.255.0,12h
+
+5. Add following line in /etc/sysctl.conf file.
+If this line already exits and is commented out, uncomment it
+
+    net.ipv4.ip_forward=1
+
+6. Add this line to /etc/rc.local
+
+    echo 2 > /sys/module/bcmdhd/parameters/op_mode
+
+7. Create an executable script and execute it at boot.
+Simply create a file with .sh extension and place following text in it.
+
+    #!/bin/bash
+    pid=$(pgrep -x wpa_supplicant) #kill wpa_supplicant if it is already running
+    if [ ! -z "$pid" ]; then
+        kill -sigterm $pid
+    fi
+    pid=$(pgrep -x dhclient) #kill dhclient if it is already running
+    if [ ! -z "$pid" ]; then
+        kill -sigterm $pid
+    fi
+
+    pid=$(pgrep -x hostapd) #kill Hostapd
+    if [ ! -z "$pid" ]; then
+        kill -sigterm $pid
+    fi
+    sleep 1
+    hostapd -B /etc/hostapd/hostapd.conf
+    rv=$(echo $?) # checking return status hostapd
+    if [ $rv -ne 0 ]; then
+        echo "could not start hostapd" 
+        exit 1
+    else
+        echo "AP mode started"
+    fi
+    exit 0
+
+  For example your file name is TurnOnAP.sh and is located at path
+  /home/nvidia/TurnOnAP.sh. Add the following 2 lines after 
+  echo 2 > /sys/module/bcmdhd/parameters/op_mode in /etc/rc.local file
+
+    sleep 1
+    /home/nvidia/TurnOnAP.sh 
+
+8. Activate NAT 
+   Activate NAT in the built-in firewall of Linux to make sure the traffic
+   going out uses the external address as its source address and thus can
+   be routed back. It can be done for example by appending the following
+   line to the file /etc/rc.local:
+
+		 iptables -t nat -A POSTROUTING -s 192.168.8.0/24 ! -d 192.168.8.0/24  -j MASQUERADE
+
+   So, /etc/rc.local will be:
+
+   nvidia@tegra-nvidia:~$ cat /etc/rc.local
+   #!/bin/sh -e
+   #
+   # rc.local
+   #
+   # This script is executed at the end of each multiuser runlevel.
+   # Make sure that the script will "exit 0" on success or any other
+   # value on error.
+   #
+   # In order to enable or disable this script just change the execution
+   # bits.
+   #
+   # By default this script does nothing.
+
+   echo 2 >/sys/module/bcmdhd/parameters/op_mode
+
+   sleep 1
+
+   /home/nvidia/TurnOnAP.sh
+
+   iptables -t nat -A POSTROUTING -s 192.168.8.0/24 ! -d 192.168.8.0/24  -j MASQUERADE
+
+   exit 0
+
+  These steps should configure your Tegra TX1 in AP mode and Tegra-WLAN or
+  whatever SSID you entered in hostapd.conf file should be available for
+  connection in your nearby wifi devices.
+  <refer to https://devtalk.nvidia.com/default/topic/910608/jetson-tx1/setting-up-wifi-access-point-on-tx1/1 >
+
+Note:
+1.  use “iw wlan0 info” to check wlan0 status
+  nvidia@tegra-nvidia:~$ iw wlan0 info
+  Interface wlan0
+        ifindex 8
+        wdev 0x1
+        addr 00:90:4c:16:70:01
+        ssid Tegra-WLAN
+        type AP
+        wiphy 0
